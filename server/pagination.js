@@ -88,49 +88,49 @@ export function publishPagination(collection, settingsIn) {
 
     if (!options.reactive) {
       const subscriptionId = `sub_${self._subscriptionId}`;
-      const count = collection.find(findQuery, {fields: {_id: 1}}).count();
-      const docs = collection.find(findQuery, options).fetch();
 
-      self.added(countCollectionName, subscriptionId, {count: count});
+      const count = collection.find(findQuery, options).count();
+      const docs = collection.find(findQuery, options).fetch();
 
       _.each(docs, function(doc) {
         self.added(collection._name, doc._id, doc);
-
-        self.changed(collection._name, doc._id, {[subscriptionId]: 1});
+        self.changed(collection._name, doc._id, {subscriptionId: subscriptionId, count: count});
       });
+
     } else {
       const subscriptionId = `sub_${self._subscriptionId}`;
-      const countCursor = collection.find(findQuery, {fields: {_id: 1}});
 
-      self.added(countCollectionName, subscriptionId, {count: countCursor.count()});
-
-      const updateCount = _.throttle(Meteor.bindEnvironment(()=> {
-        self.changed(countCollectionName, subscriptionId, {count: countCursor.count()});
-      }), 50);
-      const countTimer = Meteor.setInterval(function() {
-        updateCount();
-      }, settings.countInterval);
       const handle = collection.find(findQuery, options).observeChanges({
         added(id, fields) {
           self.added(collection._name, id, fields);
-
-          self.changed(collection._name, id, {[subscriptionId]: 1});
-          updateCount();
+          var cursor = collection.find(findQuery, options)
+          var totalItems = (cursor)? cursor.count() : 0
+          //console.log("totalItems:", totalItems, subscriptionId);
+          self.changed(collection._name, id, {subscriptionId: subscriptionId, totalItems: totalItems});
         },
         changed(id, fields) {
           self.changed(collection._name, id, fields);
         },
         removed(id) {
           self.removed(collection._name, id);
-          updateCount();
+          var cursor = collection.find(findQuery, {sort:{totalItems: -1}})
+          var sortCursor = (cursor)? cursor.fetch() : []
+          var totalItems = sortCursor.length
+          var firstDocId = (totalItems > 0)? sortCursor[0]._id : ""
+          if (cursor.findOne({_id: firstDocId})){
+            self.changed(collection._name, firstDocId, {subscriptionId: subscriptionId, totalItems: totalItems});
+          } else {
+            console.log("not find:", firstDocId);
+          }
         }
       });
 
       self.onStop(() => {
-        Meteor.clearTimeout(countTimer);
+        //Meteor.clearTimeout(countTimer);
         handle.stop();
       });
     }
+
 
     self.ready();
   });

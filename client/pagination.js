@@ -3,16 +3,8 @@ import { Meteor } from 'meteor/meteor';
 import { ReactiveDict } from 'meteor/reactive-dict';
 import { Tracker } from 'meteor/tracker';
 
-const Counts = new Meteor.Collection('pagination-counts');
-
-function getSubscriptionCount(id) {
-  const doc = Counts.findOne(id);
-
-  return (doc && doc.count) || 0;
-}
-
 class PaginationFactory {
-  constructor(collection, settingsIn = {}) {
+  constructor(collection, settingsIn = {}, ddpConnection) {
     if (!(this instanceof Meteor.Pagination)) {
       // eslint-disable-next-line max-len
       throw new Meteor.Error(4000, 'The Meteor.Pagination instance has to be initiated with `new`');
@@ -92,14 +84,26 @@ class PaginationFactory {
 
       this.settings.set('ready', false);
 
-      this.subscription = Meteor.subscribe(
-        this.settings.get('name'),
-        this.filters(),
-        options,
-        () => {
-          this.settings.set('ready', true);
-        }
-      );
+      if (ddpConnection){
+	       this.subscription = ddpConnection.subscribe(
+          this.settings.get('name'),
+          this.filters(),
+          options,
+          () => {
+            this.settings.set('ready', true);
+          }
+        );
+
+      } else {
+        this.subscription = Meteor.subscribe(
+        	this.settings.get('name'),
+        	this.filters(),
+        	options,
+        	() => {
+        	  this.settings.set('ready', true);
+        	}
+        );
+      }
     });
   }
 
@@ -242,12 +246,16 @@ class PaginationFactory {
 
     if (!this.subscription) {
       this.settings.get('resubscribe');
-
       return [];
     }
 
+    query["subscriptionId"] = `sub_${this.subscription.subscriptionId}`;
+    const optionsFind = { fields: this.fields(), sort: this.sort() };
+
     if (this.ready()) {
-      const totalItems = getSubscriptionCount(`sub_${this.subscription.subscriptionId}`);
+      let cursor = this.collection.find(query, { sort: { totalItems: -1 }})
+      let elements = (cursor !== undefined)? cursor.fetch() : []
+      let totalItems = (elements.length > 0)? elements[0].totalItems : 0
       this.settings.set('totalItems', totalItems);
 
       if (this.currentPage() > 1 && totalItems <= this.perPage() * this.currentPage()) {
@@ -255,10 +263,6 @@ class PaginationFactory {
         this.currentPage(this.totalPages());
       }
     }
-
-    query[`sub_${this.subscription.subscriptionId}`] = 1;
-
-    const optionsFind = { fields: this.fields(), sort: this.sort() };
 
     if (this.debug()) {
       console.log(
